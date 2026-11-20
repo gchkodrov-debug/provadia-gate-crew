@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>THE GATE OF PROVADIA</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Inter:wght@300;400&display=swap" rel="stylesheet">
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #141210; color: #F4EFE6; font-family: 'Inter', sans-serif; }
+        canvas { display: block; }
+
+        /* Overlays */
+        .overlay { position: absolute; pointer-events: none; opacity: 0; transition: opacity 1.5s ease; }
+        
+        #black-fade {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; z-index: 1000;
+            animation: fadeOut 2.6s ease-out forwards;
+            pointer-events: none;
+        }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+
+        #vignette { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: radial-gradient(circle, transparent 40%, rgba(0,0,0,0.8) 100%); 
+            z-index: 10; pointer-events: none; 
+        }
+
+        #title-block { 
+            top: 5%; left: 50%; transform: translateX(-50%); text-align: center; z-index: 20; 
+        }
+        #title-block h1 { 
+            font-family: 'Cinzel', serif; color: #FFEFC1; font-size: 2.5rem; 
+            margin: 0; letter-spacing: 0.3em; text-transform: uppercase; 
+        }
+        #title-block p { 
+            font-family: 'Cinzel', serif; font-size: 0.8rem; letter-spacing: 0.1em; 
+            margin-top: 0.5rem; opacity: 0.8; 
+        }
+
+        #golden-wall-block { bottom: 10%; left: 5%; z-index: 20; }
+        #golden-wall-block h2 { 
+            font-family: 'Cinzel', serif; color: #C9A227; font-size: 1.2rem; 
+            margin: 0; letter-spacing: 0.1em; 
+        }
+        #golden-wall-block p { font-size: 0.9rem; margin: 0.2rem 0; opacity: 0.7; }
+
+        #flip-btn { 
+            bottom: 8%; left: 50%; transform: translateX(-50%); 
+            pointer-events: auto; z-index: 20; 
+            background: transparent; border: 1px solid #C9A227; color: #C9A227; 
+            padding: 12px 24px; font-family: 'Cinzel', serif; cursor: pointer; 
+            transition: all 0.3s ease; letter-spacing: 0.1em; 
+        }
+        #flip-btn:hover { background: rgba(201, 162, 39, 0.1); color: #FFEFC1; }
+
+        #hint-block { bottom: 3%; right: 5%; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.2em; opacity: 0.5; z-index: 20; }
+    </style>
+</head>
+<body>
+    <div id="black-fade"></div>
+    <div id="vignette"></div>
+
+    <!-- SECTION 1: BODY OVERLAYS -->
+    <div id="title-block" class="overlay">
+        <h1>PROVADIA</h1>
+        <p>THE GATE · EUROPE'S FIRST TOWN OF RECORD</p>
+    </div>
+
+    <div id="golden-wall-block" class="overlay">
+        <h2>THE GOLDEN WALL</h2>
+        <p>0 / 47 bricks laid · one is waiting</p>
+    </div>
+
+    <button id="flip-btn" class="overlay">FLIP THE COIN</button>
+
+    <div id="hint-block" class="overlay">TAP THE COIN</div>
+
+    <script type="module">
+        // ===== SECTION 2: SHARED CONTRACTS (Pi) =====
+        import * as THREE from './three.module.min.js';
+
+        let scene, camera, renderer, clock;
+        let coinGroup, gateGroup, goldenWallGroup, dustPoints;
+        let keyLight, emberLight;
+        let flightProgress = 0, flightCurve;
+        let isFlipping = false, flipStartTime = 0, flipStartRotY = 0;
+
+        // [CONTRACT] updateCoinIdle defined in §6
+        let updateDust = function(time, delta) {};
+        function updateCoinIdle(time) {
+    coinGroup.position.y = 2.35 + Math.sin(time * 0.8) * 0.04;
+    coinGroup.rotation.x = -0.06 + Math.sin(time * 0.5) * 0.015;
+    coinGroup.rotation.z = Math.sin(time * 0.35) * 0.02;
+}
+        // [CONTRACT] updateWaitingBrick defined in §7
+        function updateWaitingBrick(time) {
+    const u = goldenWallGroup.userData;
+    if (u.waitingOverlay) u.waitingOverlay.material.opacity = 0.45 + Math.sin(time * 2.5) * 0.25;
+    if (u.waitingOutline) u.waitingOutline.material.opacity = 0.7 + Math.sin(time * 2.5) * 0.3;
+}
+        // [CONTRACT] updateEmberPulse defined in §8
+        function updateEmberPulse(time) {
+            emberLight.intensity = 1.5 + Math.sin(time * 2.2) * 0.35;
+        }
+        // [CONTRACT] updateOverlayFades defined in §10
+        let _ovEls = null;
+        function updateOverlayFades(p) {
+            if (!_ovEls) {
+                _ovEls = ['title-block', 'golden-wall-block', 'flip-btn', 'hint-block'].map(function(id) { return document.getElementById(id); });
+            }
+            const o = Math.max(0, Math.min(1, (p - 0.86) / 0.14));
+            _ovEls.forEach(function(el) { if (el) el.style.opacity = o; });
+            const btn = document.getElementById('flip-btn');
+            if (btn) btn.style.pointerEvents = o > 0.5 ? 'auto' : 'none';
+        }
+        // [CONTRACT] updateDust defined in §5
+
+        // ===== END SECTION 2 =====
+
+        // ===== SECTION 3: SCENE CORE (Pi) =====
+        function initScene() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x141210, 0.028);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.shadowMap.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            keyLight = new THREE.DirectionalLight(0xFFEFC1, 2.2);
+            keyLight.position.set(-6, 7, 6);
+            keyLight.castShadow = true;
+            scene.add(keyLight);
+
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x000000, 0.35);
+            scene.add(hemiLight);
+
+            emberLight = new THREE.PointLight(0xC9A227, 1.5);
+            emberLight.position.set(0, 3.2, 2.2);
+            scene.add(emberLight);
+
+            coinGroup = new THREE.Group();
+            coinGroup.position.set(0, 2.35, 0);
+            scene.add(coinGroup);
+
+            goldenWallGroup = new THREE.Group();
+            goldenWallGroup.position.set(0, 2.9, -8.5);
+            scene.add(goldenWallGroup);
+
+            gateGroup = new THREE.Group();
+            gateGroup.position.z = 7;
+            scene.add(gateGroup);
+
+            clock = new THREE.Clock();
+        }
+        initScene();
+        // ===== END SECTION 3 =====
+
+        // ===== SECTION 4: GATE (Pi) =====
+        (function buildGate() {
+            const stoneMat = new THREE.MeshStandardMaterial({ color: 0x2a251e, roughness: 0.95 });
+            const goldMat = new THREE.MeshStandardMaterial({ color: 0xC9A227, metalness: 0.8, roughness: 0.2 });
+
+            const createPillar = (x) => {
+                const group = new THREE.Group();
+                group.position.x = x;
+                // Pillar
+                const pillar = new THREE.Mesh(new THREE.BoxGeometry(1.5, 8.6, 1.5), stoneMat);
+                pillar.position.y = 3.68;
+                pillar.castShadow = true;
+                pillar.receiveShadow = true;
+                group.add(pillar);
+
+                // Cap
+                const cap = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.4, 1.7), stoneMat);
+                cap.position.y = 8.0;
+                cap.castShadow = true;
+                group.add(cap);
+
+                // Gold Trim (Inner)
+                const trim = new THREE.Mesh(new THREE.BoxGeometry(0.1, 8.6, 0.1), goldMat);
+                trim.position.set(x > 0 ? -0.7 : 0.7, 3.68, 0.7);
+                group.add(trim);
+
+                return group;
+            };
+
+            gateGroup.add(createPillar(-4.1));
+            gateGroup.add(createPillar(4.1));
+
+            // Lintel
+            const lintel = new THREE.Mesh(new THREE.BoxGeometry(9.5, 1.2, 1.5), stoneMat);
+            lintel.position.y = 8.0;
+            lintel.castShadow = true;
+            gateGroup.add(lintel);
+
+            const lintelTrim = new THREE.Mesh(new THREE.BoxGeometry(9.5, 0.1, 0.1), goldMat);
+            lintelTrim.position.set(0, 8.6, 0.7);
+            gateGroup.add(lintelTrim);
+        })();
+        // ===== END SECTION 4 =====
+
+        // ===== SECTION 5: GROUND + DUST (Pi) =====
+        (function buildGroundDust() {
+            const ground = new THREE.Mesh(
+                new THREE.CircleGeometry(30, 64),
+                new THREE.MeshStandardMaterial({ color: 0x100e0c, roughness: 1 })
+            );
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = -0.62;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            // Dust Particles
+            const dustCount = 380;
+            const dustGeo = new THREE.BufferGeometry();
+            const positions = new Float32Array(dustCount * 3);
+ // temporary, refined in updateDust if needed
+            // Better init spread
+            for(let i=0; i<dustCount; i++) {
+                positions[i*3] = (Math.random() - 0.5) * 28; // x[-14,14]
+                positions[i*3+1] = Math.random() * 9;        // y[0,9]
+                positions[i*3+2] = (Math.random() - 0.5) * 18; // z[-10,8] -> slightly off center
+            }
+            dustGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+            grad.addColorStop(0, 'rgba(244, 239, 230, 1)');
+            grad.addColorStop(1, 'rgba(244, 239, 230, 0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 32, 32);
+
+            const dustTex = new THREE.CanvasTexture(canvas);
+            const dustMat = new THREE.PointsMaterial({
+                size: 0.14, map: dustTex, transparent: true, 
+                color: 0xF4EFE6, depthWrite: false, blending: THREE.AdditiveBlending
+            });
+
+            dustPoints = new THREE.Points(dustGeo, dustMat);
+            scene.add(dustPoints);
+
+            // Override stub with actual implementation
+            updateDust = function(time, delta) {
+                const pos = dustPoints.geometry.attributes.position.array;
+                for (let i = 0; i < pos.length; i += 3) {
+                    pos[i+1] += delta * 0.2; // Slow drift up
+                    if (pos[i+1] > 9) pos[i+1] = 0;
+                }
+                dustPoints.geometry.attributes.position.needsUpdate = true;
+            };
+        })();
+        // ===== END SECTION 5 =====
+
+        // ===== SECTION 6: COIN (OpenClaw) =====
+        const goldMat = new THREE.MeshStandardMaterial({ color: 0xC9A227, metalness: 0.85, roughness: 0.25 });
+        const coinBody = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 0.36, 128), goldMat);
+        coinBody.rotation.x = Math.PI / 2;
+        coinBody.castShadow = true;
+        coinGroup.add(coinBody);
+        const frontRelief = new THREE.Group();
+        frontRelief.position.z = 0.19;
+        coinGroup.add(frontRelief);
+        const brickGeo = new THREE.BoxGeometry(0.34, 0.17, 0.06);
+        for (let row = 0; row < 5; row++) {
+            const y = -0.55 + row * 0.19;
+            const off = (row % 2) * 0.09;
+            for (let b = 0; b < 5; b++) {
+                const brick = new THREE.Mesh(brickGeo, goldMat);
+                brick.position.set(-0.72 + b * 0.36 + off, y, 0);
+                brick.castShadow = true;
+                frontRelief.add(brick);
+            }
+        }
+        const merlonGeo = new THREE.BoxGeometry(0.24, 0.32, 0.06);
+        for (let i = 0; i < 7; i++) {
+            const a = Math.PI * (0.22 + 0.56 * i / 6);
+            const m = new THREE.Mesh(merlonGeo, goldMat);
+            m.position.set(Math.cos(a) * 1.68, Math.sin(a) * 1.68, 0);
+            m.rotation.z = a - Math.PI / 2;
+            m.castShadow = true;
+            frontRelief.add(m);
+        }
+        const rimGeo = new THREE.SphereGeometry(0.06, 12, 12);
+        for (let i = 0; i < 47; i++) {
+            const a = (i / 47) * Math.PI * 2;
+            const s = new THREE.Mesh(rimGeo, goldMat);
+            s.position.set(Math.cos(a) * 1.76, Math.sin(a) * 1.76, 0);
+            frontRelief.add(s);
+        }
+        const backRelief = new THREE.Group();
+        backRelief.position.z = -0.19;
+        coinGroup.add(backRelief);
+        const sunMat = new THREE.MeshStandardMaterial({ color: 0xC9A227, emissive: 0xFFEFC1, emissiveIntensity: 0.35, metalness: 0.6, roughness: 0.4 });
+        const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(1.2, 48), sunMat);
+        sunDisc.rotation.y = Math.PI;
+        backRelief.add(sunDisc);
+        [0.5, 0.85, 1.2].forEach(function(r) {
+            const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.04, 12, 64), goldMat);
+            backRelief.add(ring);
+        });
+        const beadGeo = new THREE.SphereGeometry(0.05, 10, 10);
+        for (let i = 0; i < 47; i++) {
+            const a = (i / 47) * Math.PI * 2;
+            const bead = new THREE.Mesh(beadGeo, goldMat);
+            bead.position.set(Math.cos(a) * 1.76, Math.sin(a) * 1.76, 0);
+            backRelief.add(bead);
+        }
+        // ===== END SECTION 6 =====
+
+        // ===== SECTION 7: GOLDEN WALL (Codex) =====
+const canvas = document.createElement('canvas');
+canvas.width = 2048;
+canvas.height = 768;
+const ctx = canvas.getContext('2d');
+
+ctx.fillStyle = '#141210';
+ctx.fillRect(0, 0, 2048, 768);
+
+const PAD = 60;
+const GAP = 24;
+const slotW = (2048 - 2 * PAD - 11 * GAP) / 12;
+const slotH = (768 - 2 * PAD - 3 * GAP) / 4;
+const rowCounts = [12, 12, 12, 11];
+
+ctx.strokeStyle = 'rgba(201,162,39,0.35)';
+ctx.lineWidth = 4;
+
+let totalSlots = 0;
+for (let r = 0; r < rowCounts.length; r++) {
+    for (let c = 0; c < rowCounts[r]; c++) {
+        const x = PAD + c * (slotW + GAP);
+        const y = PAD + r * (slotH + GAP);
+        
+        ctx.beginPath();
+        ctx.roundRect(x, y, slotW, slotH, 10);
+        ctx.stroke();
+        totalSlots++;
+    }
+}
+
+const wallTex = new THREE.CanvasTexture(canvas);
+const wallPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(27, 10.1),
+    new THREE.MeshBasicMaterial({ map: wallTex, transparent: true, opacity: 0.9 })
+);
+goldenWallGroup.add(wallPlane);
+
+const cx = PAD + slotW / 2;
+const cy = PAD + slotH / 2;
+const lx = (cx / 2048 - 0.5) * 27;
+const ly = (0.5 - cy / 768) * 10.1;
+const w = (slotW / 2048) * 27;
+const h = (slotH / 768) * 10.1;
+
+const waitingOverlay = new THREE.Mesh(
+    new THREE.PlaneGeometry(w, h),
+    new THREE.MeshBasicMaterial({ color: 0xC9A227, transparent: true, opacity: 0.3, depthWrite: false })
+);
+waitingOverlay.position.set(lx, ly, 0.02);
+goldenWallGroup.add(waitingOverlay);
+
+const waitingOutline = new THREE.LineSegments(
+    new THREE.EdgesGeometry(waitingOverlay.geometry),
+    new THREE.LineBasicMaterial({ color: 0xFFEFC1, transparent: true, opacity: 0.7 })
+);
+waitingOutline.position.set(lx, ly, 0.03);
+goldenWallGroup.add(waitingOutline);
+
+goldenWallGroup.userData.waitingOverlay = waitingOverlay;
+goldenWallGroup.userData.waitingOutline = waitingOutline;
+
+        // ===== END SECTION 7 =====
+
+        // ===== SECTION 8: LIGHTING/TUNING (OpenCode) =====
+        keyLight.position.set(-8, 10, 6);
+        keyLight.intensity = 3.2;
+        keyLight.shadow.mapSize.set(2048, 2048);
+        keyLight.shadow.camera.left = -8;
+        keyLight.shadow.camera.right = 8;
+        keyLight.shadow.camera.top = 10;
+        keyLight.shadow.camera.bottom = -4;
+        keyLight.shadow.camera.near = 1;
+        keyLight.shadow.camera.far = 40;
+        renderer.toneMappingExposure = 1.25;
+        emberLight.position.set(0, 3.2, 1.5);
+        emberLight.distance = 6;
+        emberLight.decay = 2;
+        coinGroup.traverse(function(obj) {
+            if (obj.isMesh && obj.material && obj.material.isMeshStandardMaterial) {
+                obj.material.metalness = 0.7;
+                obj.material.roughness = 0.32;
+            }
+        });
+        // ===== END SECTION 8 =====
+
+        // ===== SECTION 9: FLIGHT+ANIMATION+FLIP+RESIZE (Pi) =====
+        (function initFlightAnimation() {
+            flightCurve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(0, 2.35, 31),
+                new THREE.Vector3(0, 3.0, 18),
+                new THREE.Vector3(0, 2.0, 10),
+                new THREE.Vector3(0, 2.35, 6.4)
+            ]);
+
+            const s = (t) => t * t * t * (t * (t * 6 - 15) + 10);
+
+            window.setFlightProgress = function(t) {
+                flightProgress = Math.max(0, Math.min(1, t));
+                const eased = s(flightProgress);
+                const pos = flightCurve.getPointAt(eased);
+                camera.position.copy(pos);
+                camera.lookAt(coinGroup.position);
+            };
+
+            window.startFlip = function() {
+                if (isFlipping) return;
+                isFlipping = true;
+                flipStartTime = clock.elapsedTime;
+                flipStartRotY = coinGroup.rotation.y;
+            };
+
+            const params = new URLSearchParams(window.location.search);
+            const shot = params.get('shot');
+            const isFrozen = shot !== null;
+            if (isFrozen) {
+                setFlightProgress(parseFloat(shot));
+            }
+
+            document.addEventListener('click', (e) => {
+                if (e.target.id === 'flip-btn' || e.target.tagName === 'CANVAS') startFlip();
+            });
+            document.getElementById('flip-btn').addEventListener('click', startFlip);
+
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            setFlightProgress(flightProgress);
+
+            function animate() {
+                requestAnimationFrame(animate);
+                const delta = clock.getDelta();
+                const elapsed = clock.elapsedTime;
+
+                if (!isFrozen && flightProgress < 1) {
+                    flightProgress += delta / 10.5;
+                    setFlightProgress(flightProgress);
+                } else if (flightProgress >= 1) {
+                    camera.position.z = 6.4 + Math.sin(elapsed * 0.3) * 0.15;
+                    camera.position.y = 2.35 + Math.sin(elapsed * 0.45) * 0.08;
+                    camera.lookAt(coinGroup.position);
+                }
+
+                if (isFlipping) {
+                    const flipT = (elapsed - flipStartTime) / 1.5;
+                    if (flipT >= 1) {
+                        coinGroup.rotation.y = flipStartRotY + Math.PI;
+                        isFlipping = false;
+                    } else {
+                        coinGroup.rotation.y = flipStartRotY + s(flipT) * Math.PI;
+                    }
+                }
+
+                updateDust(elapsed, delta);
+                updateCoinIdle(elapsed);
+                updateWaitingBrick(elapsed);
+                updateEmberPulse(elapsed);
+                updateOverlayFades(flightProgress);
+
+                renderer.render(scene, camera);
+            }
+            animate();
+        })();
+        // ===== END SECTION 9 =====
+
+        // ===== SECTION 10: POLISH (Claude Code) =====
+        // Polish: overlays start hidden (JS belt-and-braces); black fade stops intercepting after its CSS fade.
+        ['title-block', 'golden-wall-block', 'flip-btn', 'hint-block'].forEach(function(id) {
+            const el = document.getElementById(id);
+            if (el) el.style.opacity = 0;
+        });
+        setTimeout(function() {
+            const bf = document.getElementById('black-fade');
+            if (bf) bf.style.pointerEvents = 'none';
+        }, 2700);
+        // ===== END SECTION 10 =====
+    </script>
+</body>
+</html>
